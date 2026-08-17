@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -40,6 +41,8 @@ type appStatus struct {
 	PreviewMode string      `json:"previewMode"`
 	DiskFreeGB float64      `json:"diskFreeGb"`
 	Now        string       `json:"now"` // server clock, so the UI TOD matches the timecode
+	// Formats is what each feed is actually writing, for the header readout.
+	Formats []string `json:"formats"`
 	// PreviewBase prefixes the MJPEG URL. Empty in the CLI build; under Wails
 	// it points at the loopback listener, because multipart streams cannot be
 	// delivered through the webview's custom scheme handler.
@@ -120,6 +123,12 @@ func (a *App) routes() *http.ServeMux {
 			DiskFreeGB:  diskFreeGB(cfg.OutputDir),
 			Now:         time.Now().Format(time.RFC3339),
 			PreviewBase: previewBase,
+		}
+		if cfg.RecordProRes {
+			out.Formats = append(out.Formats, "ProRes "+strings.ToUpper(cfg.ProResVariant))
+		}
+		if cfg.RecordAVCIntra {
+			out.Formats = append(out.Formats, fmt.Sprintf("AVC-Intra %d", cfg.AVCIntraClass))
 		}
 		for _, f := range a.Feeds() {
 			out.Feeds = append(out.Feeds, f.status())

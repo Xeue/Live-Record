@@ -127,6 +127,15 @@
   input:focus, select:focus { outline:none; border-color:var(--accent); }
   select { font-family:inherit; }
   .hint { font-size:11px; color:var(--dim); line-height:1.5; }
+  .fmt { display:flex; gap:10px; flex-wrap:wrap; }
+  .fmt label { flex:1; min-width:190px; flex-direction:row; align-items:flex-start; gap:8px;
+               border:1px solid var(--line2); border-radius:8px; padding:10px 11px;
+               cursor:pointer; background:var(--bg); color:var(--text); font-size:12px; }
+  .fmt label:hover { border-color:#4a5560; }
+  .fmt label.on { border-color:var(--accent); background:rgba(74,158,255,.07); }
+  .fmt input[type=checkbox] { width:auto; margin:1px 0 0; accent-color:var(--accent); }
+  .fmt b { display:block; font-weight:600; margin-bottom:2px; }
+  .fmt span { color:var(--dim); font-size:11px; line-height:1.45; display:block; }
   .hint code { font-family:var(--mono); color:var(--text); background:var(--panel2);
                padding:1px 4px; border-radius:3px; }
   .warn { background:rgba(255,159,10,.1); border:1px solid rgba(255,159,10,.35);
@@ -163,7 +172,38 @@
 
       <fieldset>
         <legend>Recording</legend>
-        <div class="row">
+
+        <div class="fmt">
+          <label id="f-prores-l">
+            <input type="checkbox" id="f-prores" onchange="renderFormats()">
+            <div><b>Apple ProRes &middot; .mov</b>
+            <span>Hardware encoded. The master you finish from.</span></div>
+          </label>
+          <label id="f-avci-l">
+            <input type="checkbox" id="f-avci" onchange="renderFormats()">
+            <div><b>AVC-Intra &middot; .mxf</b>
+            <span>The one Premiere treats as a growing file. Software encoded,
+            about 1.4 cores per feed.</span></div>
+          </label>
+        </div>
+        <div class="row" style="margin-top:10px">
+          <label style="max-width:160px">ProRes flavour
+            <select id="s-variant"></select>
+          </label>
+          <label style="max-width:150px" id="f-class-l">AVC-Intra class
+            <select id="f-class">
+              <option value="50">50 &middot; 8-bit</option>
+              <option value="100">100 &middot; 10-bit 4:2:2</option>
+              <option value="200">200 &middot; 10-bit 4:2:2</option>
+            </select>
+          </label>
+          <label style="max-width:110px">Reserve hours
+            <input id="s-hours" type="number" min="1" max="24">
+          </label>
+        </div>
+        <div class="hint" id="f-note"></div>
+
+        <div class="row" style="margin-top:12px">
           <label>Output folder
             <input id="s-out" spellcheck="false" placeholder="/Volumes/RAID/Show">
           </label>
@@ -175,12 +215,6 @@
         <div class="row" style="margin-top:10px">
           <label>File name pattern
             <input id="s-pattern" spellcheck="false" oninput="renderPatternPreview()">
-          </label>
-          <label style="max-width:150px">ProRes flavour
-            <select id="s-variant"></select>
-          </label>
-          <label style="max-width:110px">Reserve hours
-            <input id="s-hours" type="number" min="1" max="24">
           </label>
         </div>
         <div class="hint">
@@ -376,7 +410,8 @@ async function refresh() {
     if (s.now) clockOffsetMs = new Date(s.now).getTime() - Date.now();
     if (typeof s.previewBase === 'string') PREVIEW_BASE = s.previewBase;
 
-    $('m-codec').textContent   = 'ProRes ' + (s.proresVariant||'').toUpperCase();
+    $('m-codec').textContent = (s.formats && s.formats.length)
+      ? s.formats.join(' + ') : 'ProRes ' + (s.proresVariant||'').toUpperCase();
     $('m-preview').textContent = s.previewMode || '—';
     const free = $('m-free');
     free.textContent = (s.diskFreeGb||0).toFixed(0)+' GB';
@@ -434,6 +469,9 @@ async function openSettings() {
   $('s-out').value     = CFG.outputDir;
   $('s-pattern').value = CFG.filePattern;
   $('s-hours').value   = CFG.maxHours;
+  $('f-prores').checked = !!CFG.recordProRes;
+  $('f-avci').checked   = !!CFG.recordAvcIntra;
+  $('f-class').value    = String(CFG.avcIntraClass || 100);
   $('s-variant').innerHTML = VARIANTS.map(v =>
     `<option value="${v}"${v===CFG.proresVariant?' selected':''}>${v.toUpperCase()}</option>`).join('');
   $('s-preview-mode').innerHTML = MODES.map(m =>
@@ -445,7 +483,7 @@ async function openSettings() {
   const isNative = !!native();
   $('s-browse').classList.toggle('hidden', !isNative);
   $('s-reveal').classList.toggle('hidden', !isNative);
-  renderFeeds(); renderPatternPreview(); renderPreviewHint(); panelState();
+  renderFeeds(); renderPatternPreview(); renderPreviewHint(); renderFormats(); panelState();
   $('settings').classList.remove('hidden');
 }
 const closeSettings = () => $('settings').classList.add('hidden');
@@ -560,6 +598,36 @@ async function removePanel() {
   await panelState();
 }
 
+/* The two formats are independent, and at least one has to be on — the backend
+   rejects neither, so say so here rather than let Save fail. */
+function renderFormats() {
+  var pro = $('f-prores').checked, avc = $('f-avci').checked;
+  $('f-prores-l').classList.toggle('on', pro);
+  $('f-avci-l').classList.toggle('on', avc);
+  $('s-variant').disabled = !pro;
+  $('f-class').disabled = !avc;
+  $('f-class-l').style.opacity = avc ? 1 : .45;
+  $('s-variant').parentElement.style.opacity = pro ? 1 : .45;
+
+  var n = $('f-note');
+  if (!pro && !avc) {
+    n.innerHTML = '<span style="color:var(--rec)">Nothing would be recorded — ' +
+                  'switch at least one on.</span>';
+  } else if (pro && avc) {
+    n.innerHTML = 'Both, from one connection: the ProRes is your master, the MXF ' +
+                  'is what you cut against while it records. About 145 GB/hour per ' +
+                  'feed combined.';
+  } else if (avc) {
+    n.innerHTML = 'MXF only — Premiere refreshes it on its own, ~45 GB/hour per feed. ' +
+                  'No ProRes master is kept.';
+  } else {
+    n.innerHTML = 'ProRes only — best quality, ~100 GB/hour per feed. Premiere will ' +
+                  'not self-refresh a growing QuickTime; use the panel below for that.';
+  }
+  var save = document.querySelector('.sheet .foot button.rec');
+  if (save) save.disabled = !pro && !avc;
+}
+
 async function checkFolder() {
   const info = $('s-outinfo');
   info.textContent = 'checking…';
@@ -580,7 +648,10 @@ async function saveSettings() {
   CFG.filePattern   = $('s-pattern').value.trim();
   CFG.proresVariant = $('s-variant').value;
   CFG.previewMode   = $('s-preview-mode').value;
-  CFG.maxHours      = parseInt($('s-hours').value,10) || CFG.maxHours;
+  CFG.maxHours       = parseInt($('s-hours').value,10) || CFG.maxHours;
+  CFG.recordProRes   = $('f-prores').checked;
+  CFG.recordAvcIntra = $('f-avci').checked;
+  CFG.avcIntraClass  = parseInt($('f-class').value,10) || 100;
   try {
     await post('/api/config', CFG);
     $('s-status').textContent = '';

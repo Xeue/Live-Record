@@ -1,0 +1,27 @@
+{
+  "listenPort": 7777,
+  "outputDir": "~/Movies/Live Record",
+  "filePattern": "{name}_{date}_{time}",
+  "proresVariant": "hq",
+  "maxHours": 6,
+  "reservedBytesPerSec": 700,
+  "moovUpdateSec": 1,
+  "previewMode": "native",
+  "previewWidth": 640,
+  "previewHeight": 360,
+  "previewFps": 12,
+  "previewQuality": 70,
+  "feeds": [
+    {
+      "name": "CAM-A",
+      "url": "srt://10.0.0.5:9001?latency=200"
+    },
+    {
+      "name": "CAM-B",
+      "url": "srt://10.0.0.6:9001?latency=200"
+    }
+  ],
+  "reservedPrefill": false,
+  "recordProRes": true,
+  "recordAvcIntra": true
+}

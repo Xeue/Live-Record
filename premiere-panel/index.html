@@ -1,0 +1,272 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Live Record Refresh</title>
+<style>
+  :root { --bg:#1d2229; --panel:#161a1f; --line:#2a3138; --line2:#39434e;
+          --dim:#8b96a3; --ok:#30d158; --warn:#ff9f0a; --rec:#ff3b30; }
+  * { box-sizing:border-box; }
+  body { background:var(--bg); color:#e6eaef; margin:0; padding:10px;
+         font:12px -apple-system,BlinkMacSystemFont,sans-serif; }
+  h2 { font-size:12px; font-weight:600; margin:0; letter-spacing:.3px; }
+  .bar { display:flex; align-items:center; gap:8px; margin-bottom:8px; }
+  .spacer { flex:1 }
+  button { background:#252c34; color:#e6eaef; border:1px solid var(--line2);
+           border-radius:5px; padding:6px 10px; cursor:pointer; font:12px inherit; }
+  button:hover { background:#2f3843; }
+  button.go   { background:var(--ok); border-color:var(--ok); color:#06210f; font-weight:600; }
+  button.stop { background:var(--rec); border-color:var(--rec); color:#fff; font-weight:600; }
+  input { width:48px; background:#0d0f12; color:#e6eaef; border:1px solid var(--line2);
+          border-radius:5px; padding:5px; font:12px inherit; }
+  .status { font-size:11px; color:var(--dim); margin-bottom:6px; }
+  .status b { color:#e6eaef }
+
+  table { width:100%; border-collapse:collapse; font-size:11px; }
+  th { text-align:left; color:var(--dim); font-weight:500; font-size:10px;
+       text-transform:uppercase; letter-spacing:.6px; padding:4px 6px;
+       border-bottom:1px solid var(--line); }
+  td { padding:5px 6px; border-bottom:1px solid #23282f; }
+  td.num { font-family:ui-monospace,Menlo,monospace; text-align:right; }
+  tr.growing td.name::before { content:'●'; color:var(--rec); margin-right:5px; }
+  tr.idle td.name::before    { content:'○'; color:var(--dim); margin-right:5px; }
+  tr.idle { opacity:.5 }
+  .gain { color:var(--ok) }
+  .empty { color:var(--dim); padding:14px 6px; }
+
+  details { margin-top:8px; border:1px solid var(--line); border-radius:6px; padding:6px 8px; }
+  summary { color:var(--dim); font-size:11px; cursor:pointer; }
+  details button { width:100%; text-align:left; margin:3px 0; }
+  .log { background:#0d0f12; border:1px solid var(--line); border-radius:5px; padding:7px;
+         font-family:ui-monospace,Menlo,monospace; font-size:10px; height:120px;
+         overflow:auto; white-space:pre-wrap; margin-top:8px; }
+  .ok{color:var(--ok)} .bad{color:var(--rec)} .warn{color:var(--warn)}
+</style>
+</head>
+<body>
+
+<div class="bar">
+  <h2>Live Record Refresh</h2>
+  <span class="spacer"></span>
+  <span>every</span><input id="secs" type="number" value="5" min="1">
+  <span>s</span>
+  <button class="go" id="run" onclick="toggle()">Start</button>
+</div>
+<div class="status" id="status">idle</div>
+
+<table>
+  <thead><tr><th>Clip</th><th style="text-align:right">Duration</th>
+             <th style="text-align:right">Gained</th><th style="text-align:right">Refreshed</th></tr></thead>
+  <tbody id="rows"><tr><td colspan="4" class="empty">Scanning…</td></tr></tbody>
+</table>
+
+<details>
+  <summary>Diagnostics</summary>
+  <button onclick="scan(true)">Rescan project now</button>
+  <button onclick="refreshAll(true)">Refresh all growing clips once</button>
+  <button onclick="refreshEverything()">Refresh EVERY clip once (ignore growth detection)</button>
+  <button onclick="caps()">Report host capabilities</button>
+  <div class="log" id="log"></div>
+</details>
+
+<script src="./CSInterface.js"></script>
+<script>
+var cs = new CSInterface();
+var fs = null;
+try { fs = require('fs'); } catch (e) {}
+
+var clips = {};      // path -> {name, size, mtime, growing, duration, gained, last}
+var timer = null;
+var scanTimer = null;
+
+function log(m, c) {
+  var el = document.getElementById('log');
+  el.innerHTML += '<span class="' + (c||'') + '">' + new Date().toTimeString().slice(0,8) +
+                  '  ' + m + '</span>\n';
+  el.scrollTop = el.scrollHeight;
+}
+// Quote a value for embedding in the ExtendScript source we hand to evalScript.
+// Newlines MUST be escaped: the paths are joined with \n, and a literal newline
+// inside a quoted string is a syntax error in ExtendScript — which surfaces only
+// as the opaque "EvalScript error".
+function q(s) {
+  return '"' + String(s)
+    .replace(/\\/g, '\\\\')
+    .replace(/"/g, '\\"')
+    .replace(/\r/g, '\\r')
+    .replace(/\n/g, '\\n') + '"';
+}
+
+// evalScript reports every host-side failure as the same bare string, so show
+// what was being run when it happens.
+function evalOr(code, label, cb) {
+  cs.evalScript(code, function (r) {
+    if (r === 'EvalScript error.') {
+      log(label + ': host rejected the call', 'bad');
+      log('  ' + code.slice(0, 160), 'bad');
+      return;
+    }
+    cb(r);
+  });
+}
+
+/* ---- growth detection -------------------------------------------------
+   A clip is "growing" if its file is still being written. Two signals, because
+   either alone is unreliable: the size increasing between polls is proof, but
+   only once we have a previous sample; a fresh mtime covers the first poll and
+   the gaps between index updates when size may briefly hold steady. */
+var FRESH_MS = 25000;
+
+function statOf(path) {
+  if (!fs) return null;
+  try { var st = fs.statSync(path); return { size: st.size, mtime: st.mtimeMs }; }
+  catch (e) { return null; }
+}
+
+function scan(verbose) {
+  cs.evalScript('lrList()', function (r) {
+    var items = [];
+    try { items = JSON.parse(r); } catch (e) { log('project read failed: ' + r, 'bad'); return; }
+
+    var seen = {};
+    for (var i = 0; i < items.length; i++) {
+      var it = items[i], p = it.path;
+      seen[p] = true;
+      var st = statOf(p);
+      var prev = clips[p];
+      var growing = false;
+
+      if (st) {
+        var fresh = (Date.now() - st.mtime) < FRESH_MS;
+        var grew  = prev && prev.size !== undefined && st.size > prev.size;
+        growing = fresh || grew;
+      } else if (prev) {
+        growing = prev.growing;    // stat failed this once; keep the old verdict
+      }
+
+      clips[p] = {
+        name: it.name, path: p,
+        size: st ? st.size : (prev ? prev.size : 0),
+        mtime: st ? st.mtime : 0,
+        growing: growing,
+        duration: it.duration,
+        gained: prev ? prev.gained : 0,
+        last: prev ? prev.last : null
+      };
+    }
+    for (var k in clips) if (!seen[k]) delete clips[k];
+
+    render();
+    if (verbose) {
+      var n = 0; for (var k2 in clips) if (clips[k2].growing) n++;
+      log('scanned ' + items.length + ' clip(s), ' + n + ' growing');
+    }
+  });
+}
+
+function growingPaths() {
+  var out = [];
+  for (var k in clips) if (clips[k].growing) out.push(k);
+  return out;
+}
+
+function refreshAll(verbose) {
+  var paths = growingPaths();
+  if (!paths.length) {
+    if (verbose) log('no growing clips to refresh', 'warn');
+    setStatus();
+    return;
+  }
+  evalOr('lrRefreshMany(' + q(paths.join('\n')) + ')', 'refresh', function (r) {
+    var res = [];
+    try { res = JSON.parse(r); } catch (e) { log('refresh: bad reply ' + r, 'bad'); return; }
+    var moved = 0;
+    for (var i = 0; i < res.length; i++) {
+      var d = res[i];
+      if (!d.found) continue;
+      var c = clips[d.path];
+      if (!c) continue;
+      if (d.error) { log(d.name + ': ' + d.error, 'bad'); continue; }
+      if (d.after > d.before + 0.001) { c.gained += (d.after - d.before); moved++; }
+      c.duration = d.after;
+      c.last = new Date();
+    }
+    render();
+    setStatus(moved);
+    if (verbose) log('refreshed ' + res.length + ', ' + moved + ' advanced',
+                     moved ? 'ok' : 'warn');
+  });
+}
+
+function refreshEverything() {
+  var all = [];
+  for (var k in clips) all.push(k);
+  if (!all.length) return log('no clips', 'warn');
+  evalOr('lrRefreshMany(' + q(all.join('\n')) + ')', 'refresh-all', function (r) {
+    log('refreshed every clip: ' + r.slice(0, 400));
+    scan(false);
+  });
+}
+
+function render() {
+  var keys = Object.keys(clips).sort(function (a, b) {
+    if (clips[a].growing !== clips[b].growing) return clips[a].growing ? -1 : 1;
+    return clips[a].name.localeCompare(clips[b].name);
+  });
+  var tb = document.getElementById('rows');
+  if (!keys.length) {
+    tb.innerHTML = '<tr><td colspan="4" class="empty">No clips in this project.</td></tr>';
+    return;
+  }
+  var h = '';
+  for (var i = 0; i < keys.length; i++) {
+    var c = clips[keys[i]];
+    h += '<tr class="' + (c.growing ? 'growing' : 'idle') + '">' +
+         '<td class="name">' + c.name + '</td>' +
+         '<td class="num">' + (c.duration >= 0 ? c.duration.toFixed(1) + 's' : '—') + '</td>' +
+         '<td class="num gain">' + (c.gained > 0.01 ? '+' + c.gained.toFixed(1) + 's' : '') + '</td>' +
+         '<td class="num">' + (c.last ? c.last.toTimeString().slice(0,8) : '—') + '</td></tr>';
+  }
+  tb.innerHTML = h;
+}
+
+function setStatus(movedNow) {
+  var n = growingPaths().length;
+  var s = document.getElementById('status');
+  if (!fs) { s.innerHTML = '<span class="bad">Node unavailable — growth detection off; ' +
+                           'use Diagnostics to refresh everything.</span>'; return; }
+  s.innerHTML = timer
+    ? 'running · <b>' + n + '</b> growing clip(s) · every <b>' +
+      document.getElementById('secs').value + 's</b>' +
+      (movedNow !== undefined ? ' · last pass advanced <b>' + movedNow + '</b>' : '')
+    : 'idle · <b>' + n + '</b> growing clip(s) detected';
+}
+
+function toggle() {
+  var b = document.getElementById('run');
+  if (timer) {
+    clearInterval(timer); timer = null;
+    clearInterval(scanTimer); scanTimer = null;
+    b.textContent = 'Start'; b.className = 'go';
+    log('stopped');
+  } else {
+    var s = Math.max(1, parseInt(document.getElementById('secs').value, 10) || 5);
+    refreshAll(true);
+    timer = setInterval(refreshAll, s * 1000);
+    // Rescan less often: picking up newly imported clips does not need to be
+    // as frequent as refreshing, and walking the project is the expensive part.
+    scanTimer = setInterval(function () { scan(false); }, Math.max(5, s * 3) * 1000);
+    b.textContent = 'Stop'; b.className = 'stop';
+    log('started, every ' + s + 's', 'ok');
+  }
+  setStatus();
+}
+
+function caps() { cs.evalScript('lrCapabilities()', function (r) { log('host: ' + r); }); }
+
+scan(true);
+caps();
+setInterval(function () { if (!timer) scan(false); }, 4000);   // keep the list live when idle
+</script>
+</body>
+</html>

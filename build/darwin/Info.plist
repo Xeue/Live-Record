@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleName</key>
+    <string>{{.Info.ProductName}}</string>
+    <!--
+      Must match "outputfilename" in wails.json exactly. {{.Name}} is the
+      PROJECT name, not the output name, and using it here produces a bundle
+      macOS refuses to open: "the executable is missing".
+    -->
+    <key>CFBundleExecutable</key>
+    <string>Live Record</string>
+
+    <!--
+      Bundle identifier. Set to match the Developer ID the app is signed with
+      (Sygnal TV Ltd) rather than leaving Wails' com.wails.* default, which
+      would ship someone else's namespace. Change the reverse-DNS prefix here if
+      a different domain suits you better; it only has to be stable, because
+      macOS keys preferences and permissions off it.
+    -->
+    <key>CFBundleIdentifier</key>
+    <string>tv.sygnal.liverecord</string>
+
+    <key>CFBundleVersion</key>
+    <string>{{.Info.ProductVersion}}</string>
+    <key>CFBundleShortVersionString</key>
+    <string>{{.Info.ProductVersion}}</string>
+    <key>CFBundleGetInfoString</key>
+    <string>{{.Info.Comments}}</string>
+    <key>CFBundleIconFile</key>
+    <string>iconfile</string>
+    <key>NSHumanReadableCopyright</key>
+    <string>{{.Info.Copyright}}</string>
+    <key>NSHighResolutionCapable</key>
+    <true/>
+
+    <!--
+      Built against the current SDK and using VideoToolbox ProRes encoding and
+      GStreamer from Homebrew, so the 10.13 default Wails writes is not honest.
+    -->
+    <key>LSMinimumSystemVersion</key>
+    <string>13.0</string>
+
+    <!--
+      Recording is the whole point: the app must keep running with its window
+      hidden or the machine idle.
+    -->
+    <key>LSUIElement</key>
+    <false/>
+    <key>NSSupportsAutomaticTermination</key>
+    <false/>
+    <key>NSSupportsSuddenTermination</key>
+    <false/>
+
+    <!--
+      The app dials SRT feeds, serves a preview on loopback, and may write to a
+      network volume. macOS prompts for the last one on first use, and a prompt
+      with no explanation gets refused.
+    -->
+    <key>NSLocalNetworkUsageDescription</key>
+    <string>Live Record connects to SRT encoders on your network and serves the preview to other machines.</string>
+    <key>NSNetworkVolumesUsageDescription</key>
+    <string>Live Record writes recordings to the folder you choose, which may be on a network volume.</string>
+    <key>NSRemovableVolumesUsageDescription</key>
+    <string>Live Record writes recordings to the folder you choose, which may be on an external drive.</string>
+    <key>NSDesktopFolderUsageDescription</key>
+    <string>Live Record writes recordings to the folder you choose.</string>
+    <key>NSDocumentsFolderUsageDescription</key>
+    <string>Live Record writes recordings to the folder you choose.</string>
+</dict>
+</plist>

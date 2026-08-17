@@ -1,0 +1,19 @@
+{
+  "$schema": "https://wails.io/schemas/config.v2.json",
+  "name": "liverecord",
+  "outputfilename": "Live Record",
+  "frontend:dir": "frontend",
+  "frontend:install": "",
+  "frontend:build": "",
+  "wailsjsdir": "./frontend/wailsjs",
+  "author": {
+    "name": "Sam Chilton"
+  },
+  "info": {
+    "companyName": "Chilton",
+    "productName": "Live Record",
+    "productVersion": "0.2.0",
+    "copyright": "Copyright 2026",
+    "comments": "Receives SRT feeds and records growing Apple ProRes for Premiere"
+  }
+}

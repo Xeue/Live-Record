@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!--
+    Entitlements for the hardened runtime, which notarisation requires.
+
+    The app is deliberately NOT sandboxed: it records to whatever volume the
+    operator chooses, runs gst-launch, and installs a panel into Adobe's
+    extensions folder. A sandbox would break all three.
+  -->
+
+  <!--
+    GStreamer is loaded from Homebrew, signed by a different team, and it
+    dlopen()s a plugin per element at runtime. Under the hardened runtime,
+    library validation would refuse every one of those, so the in-process
+    engine could not start a pipeline at all.
+  -->
+  <key>com.apple.security.cs.disable-library-validation</key>
+  <true/>
+
+  <!--
+    GStreamer reads GST_PLUGIN_PATH, GST_REGISTRY and friends from the
+    environment to find its plugins and scanner.
+  -->
+  <key>com.apple.security.cs.allow-dyld-environment-variables</key>
+  <true/>
+
+  <!--
+    ORC is GStreamer's SIMD JIT, used by videoconvert, audioconvert and friends.
+    It maps memory write+execute at runtime, which the hardened runtime forbids
+    by default. Measured: without these the app signs and launches perfectly,
+    connects, decodes, and shows live audio meters — and writes ZERO bytes,
+    because ORC fails inside the converters and the pipeline stalls:
+
+      ORC: ERROR: orc_code_region_allocate_codemem(): Failed to create write and
+      exec mmap regions. This is probably because the Hardened Runtime is enabled.
+
+    allow-jit covers MAP_JIT allocations; allow-unsigned-executable-memory
+    covers the plain RWX mmap ORC actually uses. Both, because which one applies
+    depends on how ORC was built.
+  -->
+  <key>com.apple.security.cs.allow-jit</key>
+  <true/>
+  <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+  <true/>
+
+  <!--
+    Recordings usually land on an external RAID or a mounted share rather than
+    in the home folder.
+  -->
+  <key>com.apple.security.files.user-selected.read-write</key>
+  <true/>
+</dict>
+</plist>

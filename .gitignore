@@ -1,0 +1,13 @@
+# Built binaries and bundles
+liverecord
+build/bin/
+
+# Wails writes generated JS bindings on every build
+frontend/wailsjs/
+
+# Machine-specific settings: output paths, SRT endpoints and, potentially,
+# stream IDs and passphrases. config.example.json is the template to copy.
+config.json
+
+# macOS
+.DS_Store

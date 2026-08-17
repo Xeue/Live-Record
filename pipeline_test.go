@@ -117,3 +117,35 @@ func TestMxfBranchNeverDropsBuffers(t *testing.T) {
 		t.Fatalf("expected to check both mxfmux inputs (video and audio), checked %d", checked)
 	}
 }
+
+// requiredElements drives BOTH the startup preflight and what ship.sh bundles
+// into the .app. An element used by buildPipeline but missing from that list is
+// not a warning — it is a plugin absent from the shipped bundle, which fails
+// only on a machine with no Homebrew to fall back to. That shipped once:
+// x264enc and mxfmux were added with the MXF output and never added here.
+func TestRequiredElementsCoversEveryElementUsed(t *testing.T) {
+	used := map[string]bool{
+		// video
+		"srtsrc": true, "tsdemux": true, "queue": true, "tee": true,
+		"videoconvert": true, "timecodestamper": true, "progressreport": true,
+		// ProRes output
+		"vtenc_prores": true, "qtmux": true, "filesink": true,
+		// AVC-Intra output
+		"x264enc": true, "h264parse": true, "mxfmux": true,
+		// audio
+		"audioconvert": true, "audioresample": true, "level": true, "fakesink": true,
+		// preview
+		"glimagesink": true, "videorate": true, "videoscale": true,
+		"jpegenc": true, "multipartmux": true, "fdsink": true,
+	}
+	have := map[string]bool{}
+	for _, e := range requiredElements {
+		have[e] = true
+	}
+	for el := range used {
+		if !have[el] {
+			t.Errorf("%q is used by buildPipeline but missing from requiredElements — "+
+				"it will not be bundled into the .app", el)
+		}
+	}
+}

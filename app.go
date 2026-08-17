@@ -23,7 +23,6 @@ type App struct {
 	cfgPath   string
 	gstLaunch string
 	gstIns    string
-	ffmpeg    string // only needed when AVC-Intra MXF recording is enabled
 	verbose   bool
 
 	muxOnce sync.Once
@@ -66,6 +65,11 @@ func NewDeferredApp(cfgPath string, verbose bool) *App {
 
 // Init loads configuration and verifies GStreamer. Safe to call once.
 func (a *App) Init(ctx context.Context) error {
+	// Before ANY GStreamer call or child process: a bundled .app carries its own
+	// plugins and they are found only through the environment, which gst_init
+	// reads once.
+	setupGStreamerEnv()
+
 	cfg, err := loadConfig(a.cfgPath)
 	if err != nil {
 		return fmt.Errorf("config: %w", err)
@@ -81,18 +85,12 @@ func (a *App) Init(ctx context.Context) error {
 	if err := preflight(gstIns); err != nil {
 		return err
 	}
-	// ffmpeg is only required for the MXF sidecar, so a missing one is an error
-	// only if that output is switched on.
-	ffmpegPath, ffErr := findGst("ffmpeg")
-	if cfg.RecordAVCIntra && ffErr != nil {
-		return fmt.Errorf("AVC-Intra MXF recording needs ffmpeg: %w", ffErr)
-	}
 	if err := os.MkdirAll(cfg.OutputDir, 0o755); err != nil {
 		return fmt.Errorf("output folder: %w", err)
 	}
 
 	a.mu.Lock()
-	a.cfg, a.gstLaunch, a.gstIns, a.ffmpeg, a.baseCtx = cfg, gstLaunch, gstIns, ffmpegPath, ctx
+	a.cfg, a.gstLaunch, a.gstIns, a.baseCtx = cfg, gstLaunch, gstIns, ctx
 	a.mu.Unlock()
 	return nil
 }
@@ -110,8 +108,13 @@ var requiredElements = []string{
 	"vtdec_hw", "avdec_mpeg2video", "avdec_aac", "avdec_ac3", "avdec_mp3",
 	// video path
 	"videoconvert", "timecodestamper", "progressreport", "tee",
-	// record path
+	// record path — ProRes/QuickTime
 	"vtenc_prores", "qtmux", "filesink",
+	// record path — AVC-Intra/MXF. x264enc and mxfmux were added with that
+	// output and not added here, which cost a shipped bundle: ship.sh derives
+	// what to bundle FROM this list, so a missing entry is not a startup warning
+	// but a plugin absent from the .app on a machine with no Homebrew.
+	"x264enc", "mxfmux",
 	// audio path
 	"audioconvert", "audioresample", "level", "fakesink",
 	// preview paths
@@ -267,6 +270,14 @@ func (a *App) Reconfigure(next *Config) error {
 // findGst locates a GStreamer tool, falling back to the Homebrew prefix since
 // app-bundle and launchd processes often have a minimal PATH.
 func findGst(name string) (string, error) {
+	// A bundled copy wins: it matches the bundled plugins and libraries, whereas
+	// whatever Homebrew has may be a different version entirely.
+	if res := bundleResources(); res != "" {
+		p := filepath.Join(filepath.Dir(res), "MacOS", name)
+		if st, err := os.Stat(p); err == nil && !st.IsDir() {
+			return p, nil
+		}
+	}
 	if p, err := exec.LookPath(name); err == nil {
 		return p, nil
 	}
@@ -314,6 +325,15 @@ func preflight(inspect string) error {
 		name string
 		ok   bool
 	}
+	// Warm the plugin registry ONCE, serially, before fanning out.
+	//
+	// A bundled app starts with no registry, and every gst-inspect child builds
+	// it. Eight of them racing to write the same GST_REGISTRY_1_0 leaves it in a
+	// state the first pipelines then have to rebuild — measured on a
+	// self-contained bundle as two failed record attempts on one feed before the
+	// third succeeded, each leaving an empty file behind.
+	_ = exec.Command(inspect, "--exists", requiredElements[0]).Run()
+
 	results := make(chan result, len(requiredElements))
 	sem := make(chan struct{}, 8)
 	var wg sync.WaitGroup

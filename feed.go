@@ -365,13 +365,24 @@ func (f *Feed) runSubprocess(ctx context.Context, want State, si StreamInfo, out
 	wg.Wait()
 	uptime := time.Since(started)
 
-	f.finishRun(outFile, uptime, waitErr)
+	f.finishRun(outFile, mxfFile, uptime, waitErr)
 	return uptime
 }
 
 // finishRun is the teardown both engines share: discard an empty recording,
 // repair the timecode the muxer just re-broke, and settle the feed's state.
-func (f *Feed) finishRun(outFile string, uptime time.Duration, runErr error) {
+func (f *Feed) finishRun(outFile, mxfFile string, uptime time.Duration, runErr error) {
+	// An MXF that never received a frame is a stub the muxer opened and nothing
+	// wrote. Discard it for the same reason as an empty .mov: a feed retrying a
+	// few times at startup would otherwise leave a trail of files that look like
+	// takes.
+	if mxfFile != "" {
+		if st, err := os.Stat(mxfFile); err == nil && st.Size() < 512*1024 {
+			if os.Remove(mxfFile) == nil {
+				log.Printf("[%s] discarded empty %s", f.cfg.Name, filepath.Base(mxfFile))
+			}
+		}
+	}
 	if outFile != "" {
 		// A pipeline that never produced a frame still leaves the reserved
 		// index on disk — tens of megabytes of empty movie. A feed stuck in a

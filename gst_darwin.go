@@ -173,6 +173,9 @@ var gstInitOnce sync.Once
 // gstInit initialises GStreamer exactly once for the process.
 func gstInit() {
 	gstInitOnce.Do(func() {
+		// The bundled runtime is found only through the environment, and
+		// gst_init reads it exactly once.
+		setupGStreamerEnv()
 		C.gst_init(nil, nil)
 	})
 }

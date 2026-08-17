@@ -235,6 +235,6 @@ func (f *Feed) runInProcess(ctx context.Context, want State, si StreamInfo, outF
 	prevR.Close()
 	wg.Wait()
 
-	f.finishRun(outFile, uptime, runErr)
+	f.finishRun(outFile, mxfFile, uptime, runErr)
 	return uptime
 }

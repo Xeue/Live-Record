@@ -1,29 +1,43 @@
 # Live Record
 
-Receives one or more SRT feeds **as the caller**, records each to a **growing
-Apple ProRes QuickTime file** that Premiere Pro can open while it is still being
-written, and serves a live browser preview of every feed.
+![Live Record recording two SRT feeds](docs/screenshot.png)
 
-macOS only. Built on GStreamer + Apple's VideoToolbox ProRes encoder.
+*Two SRT feeds recording simultaneously to ProRes and AVC-Intra, with
+time-of-day and elapsed clocks, audio meters and live previews.*
+
+Receives one or more SRT feeds **as the caller** and records each to files an
+editor can cut against while they are still being written — Apple ProRes in a
+growing QuickTime, AVC-Intra in a growing MXF, or both from one connection.
+
+macOS only. Built on GStreamer and Apple's VideoToolbox.
 
 ```
-srtsrc(caller) ─ decodebin ─┬─ vtenc_prores ─ qtmux ─ filesink   → CAM-A_2026-08-14_143052.mov
-                            ├─ jpegenc ─ fd 3 ────────────────── → live preview in the browser
-                            └─ level ─ PCM 24-bit ─ qtmux
+srtsrc(caller) → tsdemux → decode → tee ─┬→ vtenc_prores → qtmux  → .mov  (hardware)
+                                         ├→ x264enc → mxfmux      → .mxf
+                                         └→ preview (composited, or MJPEG)
 ```
 
-## Requirements
+## Install
 
 ```sh
-brew install gstreamer   # the mega-formula; includes srt, applemedia, libav
+./ship.sh                     # build, bundle, sign -> build/dist/*.dmg
 ```
 
-The Homebrew `ffmpeg` formula is **not** used and would not work here anyway —
-it ships without libsrt.
+The `.dmg` is **self-contained**: it carries its own GStreamer plugins,
+libraries, plugin scanner and command-line tools, so a Mac with no Homebrew runs
+it. `ship.sh` fails the build if a single load command still points outside the
+bundle.
 
-## Running
+`./ship.sh notarize` also notarises and staples the app and the image, which
+Gatekeeper requires before another Mac will open it.
 
-There are two builds from the same source.
+## Building from source
+
+```sh
+brew install gstreamer   # the mega-formula: includes srt, applemedia, libav
+```
+
+Two builds come from the same source.
 
 ### The app
 
@@ -77,26 +91,34 @@ Per feed the UI gives you:
 
 `config.json` is written on first run next to the binary.
 
+Everything below is editable in **Settings** inside the app; the file is only
+there for scripted setups. `config.example.json` is a template.
+
 ```json
 {
   "listenPort": 7777,
-  "outputDir": "/Users/you/Movies/Live Record",
+  "outputDir": "~/Movies/Live Record",
+  "filePattern": "{name}_{date}_{time}",
+  "recordProRes": true,
+  "recordAvcIntra": true,
   "proresVariant": "hq",
+  "avcIntraClass": 100,
   "maxHours": 6,
-  "reservedBytesPerSec": 700,
-  "moovUpdateSec": 1,
-  "previewWidth": 640,
-  "previewHeight": 360,
-  "previewFps": 12,
-  "previewQuality": 70,
+  "previewMode": "native",
   "feeds": [
-    { "name": "CAM-A", "host": "10.0.0.5", "port": 9001, "latency": 200,
-      "streamId": "", "passphrase": "" }
+    { "name": "CAM-A", "url": "srt://10.0.0.5:9001?latency=200" }
   ]
 }
 ```
 
 - **name** becomes the filename prefix, so keep it filesystem-friendly.
+- **url** is the whole connection — paste what your encoder shows. `latency`,
+  `streamid` and `passphrase` are read from the query string.
+- **filePattern** — tokens `{name}` `{date}` `{time}` `{datetime}`.
+- **recordProRes / recordAvcIntra** — either or both. ProRes is the master;
+  the MXF is the one Premiere treats as a growing file.
+- **previewMode** — `native` (composited GPU surface), `browser` (MJPEG in the
+  page, works from another machine), or `both`.
 - **proresVariant** — `proxy`, `lt`, `standard`, `hq`, `4444`, `4444xq`.
 - **latency** — SRT receive buffer in ms. Rule of thumb: 3–4× the round-trip
   time. 200 is fine on a LAN; use 500–1000 over the public internet.
